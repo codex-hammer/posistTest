@@ -1,0 +1,248 @@
+namespace sajal.Blockchain
+{
+  public class Tree
+  {
+    public node RootNode { get; protected set; }
+
+    protected List<node> nodes;
+    protected List<node> leaves;
+public static void Contract(Func<bool> action, string msg)
+{
+  if (!action())
+  {
+    throw new Exception(msg);
+  }
+}
+public  Tree()
+{
+  nodes = new List< Node>();
+  leaves = new List< Node>();
+}
+public  Node AppendLeaf( Node node)
+{
+  nodes.Add(node);
+  leaves.Add(node);
+
+  return node;
+}
+
+public void AppendLeaves( Node[] nodes)
+{
+  nodes.ForEach(n => AppendLeaf(n));
+}
+
+public  Node AppendLeaf( treehash hash)
+{
+  var node = CreateNode(hash);
+  nodes.Add(node);
+  leaves.Add(node);
+
+  return node;
+}
+
+public List< Node> AppendLeaves( treehash[] hashes)
+{
+  List< Node> nodes = new List< Node>();
+  hashes.ForEach(h => nodes.Add(AppendLeaf(h)));
+
+  return nodes;
+}
+public treehash AddTree(Tree tree)
+{
+  Contract(() => leaves.Count > 0, "Cannot add to a tree with no leaves.");
+  tree.leaves.ForEach(l => AppendLeaf(l));
+
+  return BuildTree();
+}
+
+public treehash BuildTree()
+{
+  // We do not call FixOddNumberLeaves because we want the ability to append 
+  // leaves and add additional trees without creating unecessary wasted space in the tree.
+  Contract(() => leaves.Count > 0, "Cannot build a tree with no leaves.");
+  BuildTree(leaves);
+
+  return RootNode.treehash;
+}
+
+
+/// Recursively reduce the current list of n nodes to n/2 parents.
+
+/// <param name="nodes"></param>
+protected void BuildTree(List<Node> nodes)
+{
+  Contract(() => nodes.Count > 0, "node list not expected to be empty.");
+
+  if (nodes.Count == 1)
+  {
+    RootNode = nodes[0];
+  }
+  else
+  {
+    List<Node> parents = new List<Node>();
+
+    for (int i = 0; i < nodes.Count; i += 2)
+    {
+      Node right = (i + 1 < nodes.Count) ? nodes[i + 1] : null;
+      Node parent = CreateNode(nodes[i], right);
+      parents.Add(parent);
+    }
+
+    BuildTree(parents);
+  }
+}
+
+
+
+/// Returns the audit proof hashes to reconstruct the root hash.
+
+/// <param name="leaftreehash">The leaf hash we want to verify exists in the tree.</param>
+/// <returns>The audit trail of hashes needed to create the root, or an empty list if the leaf hash doesn't exist.</returns>
+public List<Prooftreehash> AuditProof(treehash leaftreehash)
+{
+  List<Prooftreehash> auditTrail = new List<Prooftreehash>();
+  var leafNode = FindLeaf(leaftreehash);
+
+  if (leafNode != null)
+  {
+    Contract(() => leafNode.Parent != null, "Expected leaf to have a parent.");
+    var parent = leafNode.Parent;
+    BuildAuditTrail(auditTrail, parent, leafNode);
+  }
+
+  return auditTrail;
+}
+
+protected void BuildAuditTrail(List<Prooftreehash> auditTrail, Node parent, Node child)
+{
+  if (parent != null)
+  {
+    Contract(() => child.Parent == parent, "Parent of child is not expected parent.");
+    var nextChild = parent.LeftNode == child ? parent.RightNode : parent.LeftNode;
+    var direction = parent.LeftNode == child ? Prooftreehash.Branch.Left : Prooftreehash.Branch.Right;
+
+    // For the last leaf, the right node may not exist. In that case, we ignore it because it's
+    // the hash we are given to verify.
+    if (nextChild != null)
+    {
+      auditTrail.Add(new Prooftreehash(nextChild.treehash, direction));
+    }
+
+    BuildAuditTrail(auditTrail, child.Parent.Parent, child.Parent);
+  }
+}
+
+/// Verify that if we walk up the tree from a particular leaf, we encounter the expected root hash.
+public static bool VerifyAudit(Hash rootHash, Hash leafHash, List<ProofHash> auditTrail)
+{
+  Contract(() => auditTrail.Count > 0, "Audit trail cannot be empty.");
+  Hash testHash = leafHash;
+
+  // TODO: Inefficient - compute hashes directly.
+  foreach (ProofHash auditHash in auditTrail)
+  {
+    testHash = auditHash.Direction == ProofHash.Branch.Left ?
+    Hash.Create(testHash.Value.Concat(auditHash.Hash.Value).ToArray()) :
+    Hash.Create(auditHash.Hash.Value.Concat(testHash.Value).ToArray());
+  } 
+
+  return rootHash == testHash;
+}
+
+/// Verifies ordering and consistency of the first n leaves, such that we reach the expected subroot.
+/// This verifies that the prior data has not been changed and that leaf order has been preserved.
+/// m is the number of leaves for which to do a consistency check.
+
+public List<Prooftreehash> ConsistencyProof(int m)
+{
+  // Rule 1:
+  // Find the leftmost node of the tree from which we can start our consistency proof.
+  // Set k, the number of leaves for this node.
+  List<Prooftreehash> hashNodes = new List<Prooftreehash>();
+  int idx = (int)Math.Log(m, 2);
+
+  // Get the leftmost node.
+  Node node = leaves[0];
+
+  // Traverse up the tree until we get to the node specified by idx.
+  while (idx > 0)
+  {
+    node = node.Parent;
+    --idx;
+  }
+
+  int k = node.Leaves().Count();
+  hashNodes.Add(new Prooftreehash(node.treehash, Prooftreehash.Branch.OldRoot));
+
+  if (m == k)
+  {
+    // Continue with Rule 3 -- the remainder is the audit proof
+  }
+  else
+  {
+    // Rule 2:
+    // Set the initial sibling node (SN) to the sibling of the node acquired by Rule 1.
+    // if m-k == # of SN's leaves, concatenate the hash of the sibling SN and exit Rule 2, as this represents the hash of the old root.
+    // if m - k < # of SN's leaves, set SN to SN's left child node and repeat Rule 2.
+
+    // sibling node:
+    Node sn = node.Parent.RightNode;
+    bool traverseTree = true;
+
+    while (traverseTree)
+    {
+      Contract(() => sn != null, "Sibling node must exist because m != k");
+      int sncount = sn.Leaves().Count();
+
+      if (m - k == sncount)
+      {
+        hashNodes.Add(new Prooftreehash(sn.treehash, Prooftreehash.Branch.OldRoot));
+        break;
+      }
+
+      if (m - k > sncount)
+      {
+        hashNodes.Add(new Prooftreehash(sn.treehash, Prooftreehash.Branch.OldRoot));
+        sn = sn.Parent.RightNode;
+        k += sncount;
+      }
+      else // (m - k < sncount)
+      {
+        sn = sn.LeftNode;
+      }
+    }
+  }
+
+  // Rule 3: Apply ConsistencyAuditProof below.
+
+  return hashNodes;
+}
+
+
+
+/// Completes the consistency proof with an audit proof using the last node in the consistency proof.
+
+public List<Prooftreehash> ConsistencyAuditProof(treehash nodetreehash)
+{
+  List<Prooftreehash> auditTrail = new List<Prooftreehash>();
+
+  var node = RootNode.Single(n => n.treehash == nodetreehash);
+  var parent = node.Parent;
+  BuildAuditTrail(auditTrail, parent, node);
+
+  return auditTrail;
+}
+
+protected Node FindLeaf(treehash leaftreehash)
+{
+  // TODO: We can improve the search for the leaf hash by maintaining a sorted list of leaf hashes.
+  // We use First because a tree with an odd number of leaves will duplicate the last leaf
+  // and will therefore have the same hash.
+  return leaves.FirstOrDefault(l => l.treehash == leaftreehash);
+}
+
+public static treehash Computetreehash(treehash left, treehash right)
+{
+  return treehash.Create(left.Value.Concat(right.Value).ToArray());
+}
+

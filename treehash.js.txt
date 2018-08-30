@@ -1,0 +1,84 @@
+namespace sajal.Blockchain
+{
+  public class treehash
+  {
+    public byte[] Value { get; protected set; }
+
+    protected treehash()
+    {
+    }
+
+    public static treehash Create(byte[] buffer)
+    {
+      treehash hash = new treehash();
+      hash.ComputeHash(buffer);
+
+      return hash;
+    }
+
+    public static treehash Create(string buffer)
+    {
+      return Create(Encoding.UTF8.GetBytes(buffer));
+    }
+
+    public static treehash Create(treehash left, treehash right)
+    {
+      return Create(left.Value.Concat(right.Value).ToArray());
+    }
+
+    public static bool operator ==(treehash h1, treehash h2)
+    {
+      return h1.Equals(h2);
+    }
+
+    public static bool operator !=(treehash h1, treehash h2)
+    {
+      return !h1.Equals(h2);
+    }
+
+    public override int GetHashCode()
+    {
+      return base.GetHashCode();
+    }
+
+    public override bool Equals(object obj)
+    {
+      tree.Contract(() => obj is treehash, "rvalue is not a treehash");
+      return Equals((treehash)obj);
+    }
+
+    public override string ToString()
+    {
+      return BitConverter.ToString(Value).Replace("-", "");
+    }
+
+    public void ComputeHash(byte[] buffer)
+    {
+      SHA256 sha256 = SHA256.Create();
+      SetHash(sha256.ComputeHash(buffer));
+    }
+
+    public void SetHash(byte[] hash)
+    {
+      tree.Contract(() => hash.Length == Constants.HASH_LENGTH, "Unexpected hash length.");
+      Value = hash;
+    }
+
+    public bool Equals(byte[] hash)
+    {
+      return Value.SequenceEqual(hash);
+    }
+
+    public bool Equals(treehash hash)
+    {
+      bool ret = false;
+
+      if (((object)hash) != null)
+      {
+        ret = Value.SequenceEqual(hash.Value);
+      }
+
+      return ret;
+    }
+  }
+}
